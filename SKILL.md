@@ -13,45 +13,243 @@ Scan the project, surface all performance issues with severity, then fix them on
 
 ## Step 0 — Existing Audit Check (ALWAYS ask this first, before anything else)
 
-**Before scanning any file or asking any other question**, ask the user these two questions together:
+**Before scanning any file or asking any other question**, ask the user these three questions together:
 
 > 1. "Do you already have an audit report? (PageSpeed Insights, GTmetrix, Chrome Lighthouse, WebPageTest, or any other tool)"
-> 2. "Which page/route is most important to your business? (e.g. homepage, product page, checkout) — I'll prioritize fixes for that route first."
+> 2. "Which page/route is most important to your business? (homepage / PLP / PDP / checkout) — I'll prioritize fixes for that route first."
+> 3. "Do you want me to check a specific file or section? (e.g. `HeroBanner.jsx`, `product-listing.jsx`, `useProductFilter.js`) — if yes, I'll scan that file directly against the Fynd folder structure."
+
+If the user names a specific file in Q3, skip the full audit and jump to **Mode 3 — Specific File Check**.
 
 Then branch based on the answer:
 
-### If YES — they have an audit report
+### If YES — they have an audit report (any tool)
 
-Ask them to share it (paste scores, screenshot description, or raw data). Extract:
+**Step A: Detect the tool and data format** from what the user shares:
 
-| Field | What to look for | Why it matters |
-|-------|-----------------|----------------|
-| Overall Perf score | 0–100 | Baseline to beat |
-| LCP | Value in seconds + which element (image/text/video) | Biggest score lever |
-| CLS | Value (threshold 0.1) | Layout stability |
-| INP / FID | Value in ms (threshold 200ms) | Interaction responsiveness |
-| FCP | Value in seconds | First visible content |
-| TTFB | Value in ms (flag if > 800ms) | Server/CDN health |
-| TBT | Value in ms (lab proxy for INP) | Long task debt |
-| Speed Index | Value | Visual load progression |
-| Flagged Opportunities | Listed items + estimated savings | Prioritise biggest savings first |
-| Flagged Diagnostics | Listed items | Confirms root causes |
+| What the user shares | Tool | Fetch method |
+|---------------------|------|-------------|
+| `pagespeed.web.dev/report?url=…` | PageSpeed Insights | Auto-fetch via PSI API |
+| Any plain site URL (`https://mystore.com/`) | PageSpeed Insights | Auto-fetch via PSI API |
+| `gtmetrix.com/reports/…` | GTmetrix | Can't auto-fetch — ask to paste key data |
+| `webpagetest.org/result/…` | WebPageTest | Auto-fetch via WPT JSON endpoint |
+| Pasted JSON with `lighthouseResult` key | Lighthouse JSON export | Parse directly |
+| Pasted JSON with `data.median.firstView` | WebPageTest JSON export | Parse directly |
+| Screenshot / text / pasted scores | Any tool | Manual extraction |
 
-> **Field vs Lab — critical distinction:**
-> - **Field data** (CrUX in PSI, labelled "real users") = what actual visitors experience on their devices/networks. This is what Google uses for ranking signals. Trust these numbers for business decisions.
-> - **Lab data** (Lighthouse, labelled "simulated") = controlled synthetic test. Good for catching regressions and debugging. Can differ significantly from field. If field LCP = 4.5s but lab LCP = 2.8s, the field number is the real problem to solve.
+---
 
-Once you have the data:
-1. **Summarize what the audit found** in a short table with field vs lab clearly separated
-2. **Identify the single biggest score blocker** — usually the metric furthest from "Good" threshold
-3. **Map each flagged Opportunity** to the relevant Check ID from the scan table below (IMG-1, LCP-1, BUNDLE-2, etc.)
-4. **Prioritize those specific checks first** when scanning the codebase in Step 1
-5. Tell the user: "Your biggest score blocker is [metric] at [value] — I'll focus the scan on that first."
+### Tool: PageSpeed Insights (PSI)
+
+Triggers when: user shares `pagespeed.web.dev` URL, or any plain site URL.
+
+**Fetch:** Call the PSI API using WebFetch — no API key needed:
+```
+https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url={ENCODED_URL}&strategy=mobile&category=performance
+```
+Ask mobile (default) or desktop before fetching.
+
+**Parse `lighthouseResult`:**
+| JSON path | Metric |
+|-----------|--------|
+| `categories.performance.score` × 100 | Overall score |
+| `audits['largest-contentful-paint'].displayValue` | LCP |
+| `audits['largest-contentful-paint'].details.items` | LCP element |
+| `audits['cumulative-layout-shift'].displayValue` | CLS |
+| `audits['total-blocking-time'].displayValue` | TBT (INP proxy) |
+| `audits['first-contentful-paint'].displayValue` | FCP |
+| `audits['server-response-time'].displayValue` | TTFB |
+| `audits['speed-index'].displayValue` | Speed Index |
+| `audits['render-blocking-resources'].details.items` | Render-blocking resources |
+| `audits['uses-optimized-images'].details.items` | Unoptimized images |
+| `audits['uses-responsive-images'].details.items` | Missing srcset images |
+| `audits['unused-javascript'].details.items` | Unused JS bytes |
+| `audits['unused-css-rules'].details.items` | Unused CSS bytes |
+| `audits['uses-long-cache-ttl'].details.items` | Cache TTL issues |
+| `audits['lcp-lazy-loaded'].displayValue` | LCP image lazy-loaded |
+| `audits['efficient-animated-content'].details.items` | GIFs to convert |
+
+**Parse `loadingExperience` (field/CrUX — real users):**
+| JSON path | Metric |
+|-----------|--------|
+| `metrics.LARGEST_CONTENTFUL_PAINT_MS.percentile` | LCP p75 |
+| `metrics.CUMULATIVE_LAYOUT_SHIFT_SCORE.percentile` | CLS p75 |
+| `metrics.INTERACTION_TO_NEXT_PAINT.percentile` | INP p75 |
+| `metrics.FIRST_CONTENTFUL_PAINT_MS.percentile` | FCP p75 |
+
+> Field data may be absent for low-traffic sites — only lab data will be available in that case.
+
+---
+
+### Tool: GTmetrix
+
+Triggers when: user shares `gtmetrix.com/reports/` URL.
+
+**Cannot auto-fetch** — GTmetrix reports are JS-rendered and the API is paid. Ask the user:
+> "GTmetrix reports can't be fetched automatically. Please paste or describe: GTmetrix Grade, LCP, TBT, CLS, TTFB, and the Top Issues list with their Impact ratings."
+
+**Extract from pasted GTmetrix data:**
+| GTmetrix field | Maps to |
+|---------------|---------|
+| GTmetrix Grade (A–F) | Overall health proxy |
+| Performance % | Lighthouse score equivalent |
+| Structure % | Best practices score |
+| LCP (ms or s) | LCP metric |
+| TBT (ms) | TBT / INP proxy |
+| CLS | CLS metric |
+| TTFB (ms) | TTFB metric |
+| Total Load Time | Load time |
+| Total Page Size | Bundle size proxy |
+| Top Issues with Impact: High/Medium/Low | Map to Check IDs below |
+
+**GTmetrix issue → Check ID mapping:**
+| GTmetrix Issue | Check ID |
+|---------------|---------|
+| "Serve scaled images" / "Specify image dimensions" | IMG-1, IMG-5 |
+| "Use efficient image format" / "Optimize images" | IMG-3 (transformImage) |
+| "Defer parsing of JavaScript" | BUNDLE-2, THIRD-1 |
+| "Minify / Compress JS or CSS" | COMPRESS-1 |
+| "Leverage browser caching" | CACHE-1 |
+| "Avoid render-blocking resources" | THIRD-1, BUNDLE-2 |
+| "Reduce initial server response time" | SERVER-1 |
+| "Preload key requests" | LCP-1, PRECONNECT-1 |
+| "Avoid enormous network payloads" | BUNDLE-1, COMPRESS-1 |
+| "Avoid an excessive DOM size" | REACT-2, BUNDLE-2 |
+| "Eliminate layout shifts" | CLS-1, IMG-1 |
+| "Use passive listeners" | REACT-4 |
+
+---
+
+### Tool: WebPageTest (WPT)
+
+Triggers when: user shares `webpagetest.org/result/` URL.
+
+**Fetch:** Extract the test ID from the URL and try the JSON endpoint using WebFetch:
+```
+https://www.webpagetest.org/result/{TEST_ID}/?f=json
+```
+If the JSON endpoint is inaccessible, ask the user to export/paste the JSON or share the key metrics.
+
+**Parse `data.median.firstView`:**
+| JSON path | Metric |
+|-----------|--------|
+| `TTFB` | TTFB in ms |
+| `render` | Start Render in ms |
+| `SpeedIndex` | Speed Index |
+| `loadTime` | Total load time |
+| `TotalBlockingTime` | TBT (INP proxy) |
+| `CumulativeLayoutShift` | CLS |
+| `chromeUserTiming.LargestContentfulPaint` | LCP in ms |
+| `chromeUserTiming.firstContentfulPaint` | FCP in ms |
+| `requests` (array) | Individual resource waterfall |
+| `breakdown` | JS/CSS/image byte breakdown |
+
+Also check `data.lighthouse` for Lighthouse audit data (same fields as PSI).
+
+**WPT-specific signals → Check IDs:**
+| WPT Signal | Check ID |
+|-----------|---------|
+| TTFB > 800ms | SERVER-1 |
+| Render-blocking requests in waterfall (early red bars) | THIRD-1, BUNDLE-2 |
+| Large image files in breakdown | IMG-3, IMG-5 |
+| JS > 500KB in breakdown | BUNDLE-1, BUNDLE-2, COMPRESS-1 |
+| No CDN / direct origin requests for assets | CACHE-1, PRECONNECT-1 |
+| LCP element loads after 2.5s | LCP-1, IMG-2 |
+
+---
+
+### Tool: Lighthouse JSON export (from Chrome DevTools or CLI)
+
+Triggers when: user pastes or shares a JSON file containing `lighthouseResult` or `categories.performance`.
+
+**Parse identically to PSI** — Lighthouse is the same engine. Use the same JSON paths from the PSI section above. There is no `loadingExperience` field (no CrUX data in local Lighthouse runs).
+
+---
+
+### Tool: Any other tool (DebugBear, Calibre, SpeedVitals, Treo, etc.) or pasted text/screenshot
+
+Ask the user to share whatever they have (scores, opportunities list, screenshot description). Extract these fields from what they provide:
+
+| Field | Threshold |
+|-------|-----------|
+| Overall performance score | 0–100 |
+| LCP | Good ≤ 2.5s |
+| CLS | Good ≤ 0.1 |
+| INP or FID | Good ≤ 200ms |
+| TBT | Good ≤ 200ms |
+| FCP | Good ≤ 1.8s |
+| TTFB | Flag if > 800ms |
+| List of flagged issues / recommendations | With impact/priority |
+
+Map flagged issues to Check IDs using the opportunity → Check ID table below, then proceed to the scan.
+
+---
+
+### Universal: Opportunity → Check ID mapping (applies to all tools)
+
+| Opportunity / Issue (any tool wording) | Check IDs |
+|----------------------------------------|-----------|
+| Image size / format / next-gen / WebP / optimize images | IMG-3, IMG-5 |
+| Image dimensions missing / width+height | IMG-1 |
+| Lazy load / defer offscreen images | IMG-4 |
+| LCP image lazy loaded | IMG-2 |
+| Preload LCP image / fetchpriority | LCP-1 |
+| Render-blocking JS or CSS | THIRD-1, BUNDLE-2 |
+| Unused JS / reduce JS payload | BUNDLE-1, BUNDLE-2 |
+| Unused CSS | COMPRESS-1 |
+| Enable compression / Brotli / gzip | COMPRESS-1 |
+| Cache policy / browser caching / long cache TTL | CACHE-1 |
+| Layout shifts / CLS | CLS-1, IMG-1 |
+| JS execution time / main thread / long tasks | REACT-2, REACT-4 |
+| DOM size / too many nodes | REACT-2, BUNDLE-2 |
+| Preconnect to origins / DNS lookup | PRECONNECT-1 |
+| Chained requests / request waterfall | REACT-5, HOOK-2 |
+| Server response time / TTFB slow | SERVER-1 |
+| Font display / FOIT / FOUT | FONT-1, FONT-2 |
+| Passive event listeners | REACT-4 |
+| Third-party scripts / tag managers | THIRD-1 |
+
+---
+
+### Present the parsed report (same format for all tools)
+
+After extracting data from any tool, output this summary — always separating field (real users) from lab (simulated):
+
+```
+## [Tool name] Report — [url] — [mobile/desktop]
+
+### Lab (simulated / tool-measured)
+| Metric | Value | Status |
+|--------|-------|--------|
+| Performance Score | 54/100 | 🔴 Poor |
+| LCP | 4.2s | 🔴 Poor (>2.5s) |
+| CLS | 0.08 | 🟢 Good |
+| TBT | 620ms | 🔴 Poor (>200ms) |
+| FCP | 2.1s | 🟠 Needs improvement |
+| TTFB | 310ms | 🟢 Good |
+
+### Field (Real users — if available)
+| Metric | p75 Value | Status |
+|--------|-----------|--------|
+| LCP | 5.8s | 🔴 Poor |
+| INP | 380ms | 🔴 Poor |
+| CLS | 0.12 | 🟠 Needs improvement |
+
+### Biggest Blocker: LCP at 5.8s (field)
+Tool flagged: "Preload LCP image", "Serve images in next-gen formats", "Defer offscreen images"
+→ Prioritizing checks: LCP-1, IMG-2, IMG-3, IMG-5 — scanning Tier 1 files first.
+```
+
+> **Field vs Lab:** Field data = real users, what Google uses for ranking. Lab = simulated. If they differ, trust field. Lab is for debugging root cause.
+
+Then proceed to Step 1 scan, running the mapped Check IDs first before the full check table.
+
+---
 
 ### If NO — no existing audit
 
-Acknowledge and move straight to Step 1 code scan. Optionally suggest:
-> "No problem — I'll scan the code directly. After we're done, you can run a free PageSpeed Insights check at https://pagespeed.web.dev to validate the improvements."
+Acknowledge and move straight to Step 1 code scan. Offer:
+> "No problem — I'll scan the code directly. If you share your site URL I can pull a live PageSpeed Insights report automatically, or you can run it free at pagespeed.web.dev after we're done."
 
 ---
 
@@ -59,9 +257,54 @@ Acknowledge and move straight to Step 1 code scan. Optionally suggest:
 
 Run this when the user says "audit", "check my project", "what's slow", or similar.
 
+### Fynd Page & Section Priority
+
+Scan in this order — highest business impact first:
+
+**Tier 1 — Scan First (critical user journeys)**
+| Page / Section type | Why it matters |
+|---------------------|---------------|
+| `pages/home.jsx` or `index.jsx` | First impression, LCP baseline for all users |
+| `pages/product-listing.jsx` (PLP) | High traffic, filter/sort INP, product card CLS |
+| `pages/product-description.jsx` (PDP) | Conversion page, image LCP, add-to-cart INP |
+| Sections: sliders / carousels | Heavy JS, layout shift on load, lazy image issues |
+| Sections: product cards (grid/list) | Repeated images → CLS, srcset, transformImage |
+| Sections: hero banners | #1 LCP element on most pages |
+
+**Tier 2 — Scan Second**
+| Area | Why |
+|------|-----|
+| `helper/` and `hooks/` (custom hooks) | SSR safety, fetch waterfalls, re-render triggers |
+| `sections/` (remaining non-Tier-1 sections) | Code splitting, lazy load |
+| `components/` (shared UI) | Re-render chains from shared state |
+
+**Tier 3 — Scan Last**
+| Area | Why |
+|------|-----|
+| `styles/` | CLS from animations, font-display |
+| `config/` / `assets/` | Bundle config, compression, cache settings |
+
+> **Rule:** Always complete Tier 1 before moving to Tier 2. Report Tier 1 issues separately so the user can see the highest-impact fixes first.
+
 ### Step 1: Scan the project
 
-Use Glob + Grep to scan these folders: `theme/sections/`, `theme/components/`, `theme/pages/`, `theme/custom-templates/`, `theme/helper/`
+Use Glob + Grep. **Scan Tier 1 files first, then Tier 2, then Tier 3.** Within each tier, run all checks in parallel:
+
+**Tier 1 files to target:**
+- `theme/pages/home.jsx`, `theme/pages/index.jsx`
+- `theme/pages/product-listing.jsx`
+- `theme/pages/product-description.jsx`
+- `theme/sections/*[Ss]lider*.jsx`, `theme/sections/*[Cc]arousel*.jsx`
+- `theme/sections/*[Pp]roduct[Cc]ard*.jsx`, `theme/sections/*[Pp]roduct[Gg]rid*.jsx`, `theme/sections/*[Pp]roduct[Ll]ist*.jsx`
+- `theme/sections/*[Bb]anner*.jsx`, `theme/sections/*[Hh]ero*.jsx`
+
+**Tier 2 files to target:**
+- `theme/helper/*.js`, `theme/helper/*.jsx`, `theme/hooks/*.js`, `theme/hooks/*.jsx`
+- Remaining files in `theme/sections/` not matched above
+- `theme/components/`
+
+**Tier 3:**
+- `theme/styles/`, `vite.config.*`, `theme/config/`
 
 Run ALL of these checks in parallel:
 
@@ -94,47 +337,67 @@ Run ALL of these checks in parallel:
 | RUM-1 | No `web-vitals` package in `package.json`; no `onLCP`/`onINP`/`onCLS` calls anywhere in codebase | No field data — can't measure real-user CWV or prove improvements ship |
 | REACT-5 | `useEffect(() => { fetch(...)  }, [])` chains where one fetch triggers another (waterfall) instead of parallel fetches or RSC | LCP — sequential fetches delay content; each waterfall step adds one RTT |
 | SERVER-1 | SSR route handlers or API routes with no `Server-Timing` header and no `Cache-Control` on HTML responses | TTFB — slow server is invisible; can't distinguish db vs app vs CDN miss |
+| HOOK-1 | Custom hooks in `helper/`/`hooks/` using `window`/`document`/`localStorage` without `typeof window !== 'undefined'` guard | SSR crash — hooks used in sections run server-side |
+| HOOK-2 | Custom hooks with `useEffect` fetch chains (one fetch triggers another via state) without `Promise.all` or parallel pattern | LCP — waterfall fetches in hooks delay render just like component-level waterfalls |
+| HOOK-3 | Custom hooks returning new object/array literal on every call (e.g. `return { data, loading }` without `useMemo`) used as dep in parent `useEffect` | INP — causes infinite re-render loops or stale-closure bugs in parent components |
+| HOOK-4 | Custom hooks with heavy `.filter()`/`.sort()`/`.reduce()` on large arrays without `useMemo` inside the hook | INP — computation runs on every parent render, not just when inputs change |
 
 ### Step 2: Present the issue report
 
-After scanning, output a structured report — DO NOT apply any fix yet.
+After scanning, output a structured report — DO NOT apply any fix yet. **Group issues by Tier first, then by severity within each tier.**
 
 ```
 ## Performance Audit Report — [project name]
 
 ### Summary
-| Severity  | Count |
-|-----------|-------|
-| 🔴 Critical | N    |
-| 🟠 Major    | N    |
-| 🟡 Minor    | N    |
-| Total       | N    |
+| Severity  | Tier 1 (Home/PLP/PDP + key sections) | Tier 2 (Hooks + other sections) | Tier 3 (Config/styles) |
+|-----------|--------------------------------------|--------------------------------|------------------------|
+| 🔴 Critical | N | N | N |
+| 🟠 Major    | N | N | N |
+| 🟡 Minor    | N | N | N |
 
 ---
 
-### 🔴 Critical Issues  (break functionality or crash SSR)
+### Tier 1 — Home / PLP / PDP / Sliders / Product Cards / Banners
+
+#### 🔴 Critical Issues
 | # | Check | File | Line | Issue | Metric |
 |---|-------|------|------|-------|--------|
 | 1 | SSR-1 | sections/HeroBanner.jsx | 12 | `window.innerWidth` used outside SSR guard | SSR crash |
 
-### 🟠 Major Issues  (significant metric impact — ask permission before fixing)
+#### 🟠 Major Issues
 | # | Check | File | Line | Issue | Metric | KPI Risk | ICE Priority |
 |---|-------|------|------|-------|--------|---------|-------------|
-| 1 | LCP-1 | sections/HeroBanner.jsx | 5 | Hero image missing fetchpriority="high" | LCP −600ms | Conversion ↓ | **High** (small change, big gain) |
-| 2 | IMG-3 | sections/ProductCard.jsx | 34 | Raw image URL — no transformImage | LCP −300ms | Bounce ↑ | **High** (medium effort, clear win) |
-| 3 | IMG-1 | components/Banner.jsx | 8 | img missing width/height | CLS | Misclicks, rage clicks | **Medium** |
+| 1 | LCP-1 | sections/HeroBanner.jsx | 5 | Hero image missing fetchpriority="high" | LCP −600ms | Conversion ↓ | **High** |
+| 2 | IMG-3 | sections/ProductCard.jsx | 34 | Raw image URL — no transformImage | LCP −300ms | Bounce ↑ | **High** |
 
 > **ICE scoring guide:** Impact (metric distance from threshold × user volume on route) × Confidence (evidence strength: trace/waterfall = high, code inspection only = medium) ÷ Effort (S=high, L=low). Fix highest ICE first.
 
-### 🟡 Minor Issues  (low risk, easy wins)
-| # | Check | File | Line | Issue | Metric | KPI Risk |
-|---|-------|------|------|-------|--------|---------|
-| 1 | IMG-4 | sections/BlogCard.jsx | 22 | Below-fold img missing loading="lazy" | TTI | Slower perceived load |
-| 2 | REACT-1 | components/List.jsx | 45 | .map() missing key= prop | React warning | None direct |
+#### 🟡 Minor Issues
+| # | Check | File | Line | Issue | Metric |
+|---|-------|------|------|-------|--------|
+| 1 | IMG-4 | sections/ProductSlider.jsx | 22 | Below-fold img missing loading="lazy" | TTI |
+
+---
+
+### Tier 2 — Hooks / Other Sections / Components
+
+#### 🔴 Critical
+| # | Check | File | Line | Issue | Metric |
+|---|-------|------|------|-------|--------|
+| 1 | HOOK-1 | helper/useWindowSize.js | 3 | `window.innerWidth` in hook without SSR guard | SSR crash |
+
+#### 🟠 Major / 🟡 Minor
+(same table structure as Tier 1)
+
+---
+
+### Tier 3 — Config / Styles
+(issues here if any)
 ```
 
 After the report, ask:
-> "Found N issues. Should I start fixing them? I'll go through Critical first, then Major — asking your permission before each one. Minor issues I'll batch at the end."
+> "Found N issues across [Tier 1: X, Tier 2: Y, Tier 3: Z]. Should I start fixing them? I'll work through Tier 1 first — Critical then Major. I'll ask your permission before each one. Minor issues I'll batch at the end."
 
 ---
 
@@ -239,6 +502,41 @@ Skip the full audit. Go straight to:
 3. Read the affected file(s)
 4. Present the fix with before/after
 5. Ask permission, then apply
+
+---
+
+## Mode 3 — Specific File Check (when user names a file in Step 0 Q3)
+
+Use this when the user gives a filename like `HeroBanner.jsx`, `useProductFilter.js`, `product-listing.jsx`.
+
+### Step A: Resolve the file in the Fynd folder structure
+
+Map the filename to its likely Fynd location using this lookup:
+
+| Filename pattern | Likely Fynd path | Protected? |
+|-----------------|-----------------|------------|
+| `home.jsx`, `index.jsx` | `theme/pages/home.jsx` or `theme/pages/index.jsx` | pages — do NOT rename |
+| `product-listing.jsx` | `theme/pages/product-listing.jsx` | pages — do NOT rename |
+| `product-description.jsx` | `theme/pages/product-description.jsx` | pages — do NOT rename |
+| `*Slider*.jsx`, `*Carousel*.jsx` | `theme/sections/` | Safe to optimize |
+| `*ProductCard*.jsx`, `*ProductGrid*.jsx` | `theme/sections/` | Safe to optimize |
+| `*Banner*.jsx`, `*Hero*.jsx` | `theme/sections/` | Safe to optimize |
+| `use*.js` / `use*.jsx` | `theme/helper/` or `theme/hooks/` | Safe — apply HOOK checks |
+| Anything in `pages/` | `theme/pages/[filename]` | Do NOT rename or restructure |
+| Anything in `components/` | `theme/components/[filename]` | Safe to optimize |
+
+Tell the user: "Found `[filename]` at `[resolved path]`. This is a [Tier 1 / Tier 2] file — [protected / safe to optimize]."
+
+### Step B: Read the file and run all relevant checks
+
+- Run the full check table (IMG-*, SSR-*, REACT-*, BUNDLE-*, HOOK-*, etc.) against that single file
+- For hook files (`use*.js`): focus on HOOK-1 through HOOK-4 + SSR-1, SSR-2, REACT-3, REACT-5
+- For section files: focus on IMG-1–6, LCP-1, CLS-1, REACT-1–5, SSR-1, SSR-2, BUNDLE-2
+- For page files: focus on LCP-1, SSR-1, REACT-5, PRECONNECT-1, SERVER-1
+
+### Step C: Report and fix (same format as Mode 1 Step 2 + Step 3)
+
+Output a compact report for just that file, then follow the same Critical → Major → Minor fix flow with permission gates.
 
 ---
 
