@@ -6,52 +6,14 @@ A Claude Code skill that audits and fixes frontend performance issues — Core W
 
 The skill must be placed at `.claude/skills/frontend-perf/` inside your project root.
 
+
 ### Option 1: Git Submodule (Recommended)
 
 Keeps the skill version-controlled and updatable.
 
 ```bash
-mkdir -p .claude/skills
-git submodule add https://github.com/naisargidevx/frontend-perf.git .claude/skills/frontend-perf
-git commit -m "Add frontend-perf Claude skill"
+npx skills add  https://github.com/naisargidevx/frontend-perf.git .claude/skills/frontend-perf
 ```
-
-Teammates clone the skill along with the project:
-
-```bash
-git submodule update --init --recursive
-```
-
-Update to latest version later:
-
-```bash
-git submodule update --remote .claude/skills/frontend-perf
-git commit -m "Update frontend-perf skill"
-```
-
----
-
-### Option 2: Clone Directly
-
-No submodule tracking — just a one-time install.
-
-```bash
-mkdir -p .claude/skills
-git clone https://github.com/naisargidevx/frontend-perf.git .claude/skills/frontend-perf
-```
-
----
-
-### Option 3: Global Install (All Projects)
-
-Install once, available in every project on your machine.
-
-```bash
-mkdir -p ~/.claude/skills
-git clone https://github.com/naisargidevx/frontend-perf.git ~/.claude/skills/frontend-perf
-```
-
----
 
 ## Verify Installation
 
